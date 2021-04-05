@@ -7,8 +7,8 @@ config.read('dwh.cfg')
 
 # DROP TABLES
 
-staging_events_table_drop = "DROP TABLE IF EXISTS stage_events"
-staging_songs_table_drop = "DROP TABLE IF EXISTS stage_songs"
+staging_events_table_drop = "DROP TABLE IF EXISTS staging_events"
+staging_songs_table_drop = "DROP TABLE IF EXISTS staging_songs"
 songplay_table_drop = "DROP TABLE IF EXISTS songplay"
 user_table_drop = "DROP TABLE IF EXISTS users"
 song_table_drop = "DROP TABLE IF EXISTS songs"
@@ -21,22 +21,22 @@ staging_events_table_create= ("""
  CREATE TABLE staging_events(
         artist          VARCHAR,
         auth            VARCHAR,
-        first_name      VARCHAR,
+        firstName       VARCHAR,
         gender          CHAR(1),
-        item_in_session INTEGER,
-        last_name       VARCHAR,
+        itemInSession   INTEGER,
+        lastName        VARCHAR,
         length          FLOAT,
         level           VARCHAR,
         location        VARCHAR,
         method          VARCHAR,
         page            VARCHAR,
         registration    FLOAT,
-        session_id      INTEGER,
+        sessionId       INTEGER,
         song            VARCHAR,
         status          INTEGER,
         ts              TIMESTAMP,
-        user_agent      VARCHAR,
-        user_id         INTEGER 
+        userAgent       VARCHAR,
+        userId          VARCHAR 
                             )                             
 """)
 
@@ -57,9 +57,9 @@ staging_songs_table_create = ("""
 
 songplay_table_create = ("""
  CREATE TABLE songplay(
-        songplay_id INTEGER IDENTITY(0,1)   PRIMARY KEY,
+        songplay_id INTEGER IDENTITY(0,1) PRIMARY KEY,
         start_time  TIMESTAMP,
-        user_id     INTEGER,
+        user_id     VARCHAR,
         level       VARCHAR,
         song_id     VARCHAR,
         artist_id   VARCHAR,
@@ -71,7 +71,7 @@ songplay_table_create = ("""
 
 user_table_create = ("""
 CREATE TABLE users(
-        user_id     INTEGER PRIMARY KEY,
+        user_id     VARCHAR PRIMARY KEY,
         first_name  VARCHAR,
         last_name   VARCHAR,
         gender      VARCHAR,
@@ -116,21 +116,28 @@ CREATE TABLE time(
 staging_events_copy = ("""
     COPY {} FROM {}
     IAM_ROLE '{}'
-    JSON {} ;                      
-""").format( #  region '{}'
-    config['S3']['LOG_DATA'],
-    config['IAM_ROLE']['ARN'],
-    config['S3']['LOG_JSONPATH']#,
-    # config['CLUSTER']['REGION']
+    JSON {}
+    region '{}'
+    timeformat 'epochmillisecs';                      
+""").format('staging_events',
+    config.get('S3','LOG_DATA'),
+    config.get('IAM_ROLE','ARN'),
+    config.get('S3','LOG_JSONPATH'),
+    config.get('CLUSTER','REGION')
 )
 
 staging_songs_copy = ("""
     COPY {} FROM {}
     IAM_ROLE '{}'
-    JSON 'auto
-""").format(
-    config['S3']['SONG_DATA'],
-    config['IAM_ROLE']['ARN']
+    JSON 'auto'
+    region '{}'
+    compupdate off
+    EMPTYASNULL
+    BLANKSASNULL;
+""").format('staging_songs',
+    config.get('S3','SONG_DATA'),
+    config.get('IAM_ROLE','ARN'),
+    config.get('CLUSTER','REGION')
 )
 
 # FINAL TABLES
@@ -146,21 +153,21 @@ songplay_table_insert = ("""
         location,
         user_agent)
     SELECT
-        TIMESTAMP 'epoch' + se.ts/1000 * interval '1 second' as start_time,
-        se.user_id,
+        se.ts as start_time,
+        se.userId as user_id,
         se.level,
         ss.song_id,
         ss.artist_id,
-        se.session_id,
+        se.sessionId as session_id,
         se.location,
-        se.user_agent
+        se.userAgent as user_agent
     FROM staging_events se
-    LEFT JOIN stage_song ss ON
+    LEFT JOIN staging_songs ss ON
         se.song = ss.title AND
         se.artist = ss.artist_name AND
         se.length = ss.duration
     WHERE
-        se.page = 'NextSong'                 
+        se.page = 'NextSong' AND ss.song_id IS NOT NULL AND se.userId IS NOT NULL;
 """)
 
 user_table_insert = ("""
@@ -171,13 +178,13 @@ user_table_insert = ("""
        gender,
        level)
     SELECT DISTINCT
-        user_id,
-        first_name,
-        last_name,
+        userId as  user_id,
+        firstName as first_name,
+        lastName as last_name,
         gender,
         level
-    FROM stage_event
-    WHERE page = 'NextSong'                
+    FROM staging_events se 
+    WHERE page = 'NextSong' AND se.userId IS NOT NULL;               
 """)
 
 song_table_insert = ("""
